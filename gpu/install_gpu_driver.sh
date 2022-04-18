@@ -96,6 +96,7 @@ readonly SPARK_CONF_DIR='/etc/spark/conf'
 
 NVIDIA_SMI_PATH='/usr/bin'
 MIG_MAJOR_CAPS=0
+IS_MIG_ENABLED=0
 
 function execute_with_retries() {
   local -r cmd=$1
@@ -376,14 +377,19 @@ function main() {
   # regardless if they have attached GPUs
   configure_yarn
 
+  META_MIG_VALUE=$(/usr/share/google/get_metadata_value attributes/ENABLE_MIG)
+  MIG_ENABLE_FETCH_RET=$?
   # Detect NVIDIA GPU
   if (lspci | grep -q NVIDIA); then
-    NUM_MIG_GPUS=`/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader | uniq | wc -l`
-    if [[ $NUM_MIG_GPUS -eq 1 ]]; then
-      if (/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader | grep Enabled); then
-        NVIDIA_SMI_PATH='/usr/local/yarn-mig-scripts/'
-        MIG_MAJOR_CAPS=`grep nvidia-caps /proc/devices | cut -d ' ' -f 1`
-        fetch_mig_scripts
+    if [[ ($MIG_ENABLE_FETCH_RET -eq 0) && ($META_MIG_VALUE -eq 1) ]]; then
+      NUM_MIG_GPUS=`/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader | uniq | wc -l`
+      if [[ $NUM_MIG_GPUS -eq 1 ]]; then
+        if (/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader | grep Enabled); then
+          IS_MIG_ENABLED=1
+          NVIDIA_SMI_PATH='/usr/local/yarn-mig-scripts/'
+          MIG_MAJOR_CAPS=`grep nvidia-caps /proc/devices | cut -d ' ' -f 1`
+          fetch_mig_scripts
+        fi
       fi
     fi
 
@@ -391,24 +397,28 @@ function main() {
       execute_with_retries "apt-get install -y -q 'linux-headers-$(uname -r)'"
     fi
 
-    #install_nvidia_gpu_driver
-    #if [[ -n ${CUDNN_VERSION} ]]; then
-    #  install_nvidia_nccl
-    #  install_nvidia_cudnn
-    #fi
-   # 
-    # Install GPU metrics collection in Stackdriver if needed
-   # if [[ ${INSTALL_GPU_AGENT} == true ]]; then
-   #   install_gpu_agent
-   #   echo 'GPU metrics agent successfully deployed.'
-   # else
-   #   echo 'GPU metrics agent will not be installed.'
-   # fi
-
-    #configure_gpu_exclusive_mode
+    # if mig is enabled drivers would have already been installed
+    if [[ $IS_MIG_ENABLED -eq 0 ]]; then
+      install_nvidia_gpu_driver
+      if [[ -n ${CUDNN_VERSION} ]]; then
+        install_nvidia_nccl
+        install_nvidia_cudnn
+      fi
+    
+      #Install GPU metrics collection in Stackdriver if needed
+      if [[ ${INSTALL_GPU_AGENT} == true ]]; then
+        install_gpu_agent
+        echo 'GPU metrics agent successfully deployed.'
+      else
+        echo 'GPU metrics agent will not be installed.'
+      fi
+      configure_gpu_exclusive_mode
+    fi
 
     configure_yarn_nodemanager
-    configure_gpu_script
+    if [[ $IS_MIG_ENABLED -eq 1 ]]; then
+      configure_gpu_script
+    fi
     configure_gpu_isolation
 
     if systemctl status hadoop-yarn-nodemanager; then
@@ -417,7 +427,7 @@ function main() {
   elif [[ "${ROLE}" == "Master" ]]; then
     configure_yarn_nodemanager
     configure_gpu_script
-    #configure_gpu_isolation
+    configure_gpu_isolation
     systemctl restart hadoop-yarn-resourcemanager.service
     # Restart NodeManager on Master as well if this is a single-node-cluster.
     if systemctl status hadoop-yarn-nodemanager; then
