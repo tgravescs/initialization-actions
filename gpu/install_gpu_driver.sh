@@ -69,7 +69,7 @@ readonly NVIDIA_DEBIAN_CUDA_URL
 
 # Parameters for NVIDIA-provided Ubuntu GPU driver
 readonly NVIDIA_UBUNTU_REPO_URL="${NVIDIA_BASE_DL_URL}/cuda/repos/ubuntu1804/x86_64"
-readonly NVIDIA_UBUNTU_REPO_KEY="${NVIDIA_UBUNTU_REPO_URL}/3bf863cc.pub"
+readonly NVIDIA_UBUNTU_REPO_KEY_PACKAGE="${NVIDIA_UBUNTU_REPO_URL}/cuda-keyring_1.0-1_all.deb"
 readonly NVIDIA_UBUNTU_REPO_CUDA_PIN="${NVIDIA_UBUNTU_REPO_URL}/cuda-ubuntu1804.pin"
 
 # Parameter for NVIDIA-provided Rocky Linux GPU driver
@@ -178,7 +178,9 @@ EOF
 function install_nvidia_gpu_driver() {
   if [[ ${OS_NAME} == debian ]]; then
     curl -fsSL --retry-connrefused --retry 10 --retry-max-time 30 \
-    "${NVIDIA_UBUNTU_REPO_KEY}" | apt-key add -
+      "${NVIDIA_UBUNTU_REPO_KEY_PACKAGE}" -o /tmp/cuda-keyring.deb
+    dpkg -i "/tmp/cuda-keyring.deb"
+
     curl -fsSL --retry-connrefused --retry 10 --retry-max-time 30 \
       "${NVIDIA_DEBIAN_GPU_DRIVER_URL}" -o driver.run
     bash "./driver.run" --silent --install-libglvnd
@@ -188,7 +190,8 @@ function install_nvidia_gpu_driver() {
     bash "./cuda.run" --silent --toolkit --no-opengl-libs
   elif [[ ${OS_NAME} == ubuntu ]]; then
     curl -fsSL --retry-connrefused --retry 10 --retry-max-time 30 \
-    "${NVIDIA_UBUNTU_REPO_KEY}" | apt-key add -
+      "${NVIDIA_UBUNTU_REPO_KEY_PACKAGE}" -o /tmp/cuda-keyring.deb
+    dpkg -i "/tmp/cuda-keyring.deb"
     curl -fsSL --retry-connrefused --retry 10 --retry-max-time 30 \
       "${NVIDIA_UBUNTU_REPO_CUDA_PIN}" -o /etc/apt/preferences.d/cuda-repository-pin-600
 
@@ -419,17 +422,17 @@ function main() {
     configure_gpu_script
     configure_gpu_isolation
 
-    if systemctl status hadoop-yarn-nodemanager; then
-      systemctl restart hadoop-yarn-nodemanager.service
-    fi
   elif [[ "${ROLE}" == "Master" ]]; then
     configure_yarn_nodemanager
     configure_gpu_script
+  fi
+
+  # Restart YARN services if they are running already
+  if [[ $(systemctl show hadoop-yarn-resourcemanager.service -p SubState --value) == 'running' ]]; then
     systemctl restart hadoop-yarn-resourcemanager.service
-    # Restart NodeManager on Master as well if this is a single-node-cluster.
-    if systemctl status hadoop-yarn-nodemanager; then
-      systemctl restart hadoop-yarn-nodemanager.service
-    fi
+  fi
+  if [[ $(systemctl show hadoop-yarn-nodemanager.service -p SubState --value) == 'running' ]]; then
+    systemctl restart hadoop-yarn-nodemanager.service
   fi
 }
 
