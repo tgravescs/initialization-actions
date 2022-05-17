@@ -13,6 +13,10 @@ class NvidiaGpuDriverTestCase(DataprocTestCase):
   def verify_instance(self, name):
     self.assert_instance_command(name, "nvidia-smi")
 
+  def verify_mig_instance(self, name):
+    self.assert_instance_command(name,
+        "/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader | uniq | xargs -I % test % = 'Enabled'")
+
   def verify_instance_gpu_agent(self, name):
     self.assert_instance_command(
         name, "systemctl status gpu-utilization-agent.service")
@@ -140,7 +144,7 @@ class NvidiaGpuDriverTestCase(DataprocTestCase):
                                                 machine_suffix))
 
   @parameterized.parameters(
-      ("STANDARD", ["m", "w-0", "w-1"], GPU_A100, GPU_A100, "NVIDIA"),
+      ("STANDARD", ["m", "w-0", "w-1"], None, GPU_A100, "NVIDIA"),
   )
   def test_install_gpu_with_mig(self, configuration, machine_suffixes,
                                   master_accelerator, worker_accelerator,
@@ -148,14 +152,15 @@ class NvidiaGpuDriverTestCase(DataprocTestCase):
     self.createCluster(
         configuration,
         self.INIT_ACTIONS,
-        machine_type="a2-highgpu-1g",
+        master_machine_type="n1-standard-4",
+        worker_machine_type="a2-highgpu-1g",
         master_accelerator=master_accelerator,
         worker_accelerator=worker_accelerator,
         metadata=None,
         timeout_in_minutes=30,
-        startup_scripts=["mig.sh"])
-    for machine_suffix in machine_suffixes:
-      self.verify_instance("{}-{}".format(self.getClusterName(),
+        startup_script="gpu/mig.sh")
+    for machine_suffix in ["w-0", "w-1"]:
+      self.verify_mig_instance("{}-{}".format(self.getClusterName(),
                                           machine_suffix))
 
   @parameterized.parameters(
